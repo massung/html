@@ -21,6 +21,7 @@
   (:use :cl)
   (:export
    #:html
+   #:html-page
    #:html-format
    #:html-encode))
 
@@ -70,9 +71,19 @@
           (format stream
                   +tag-format+
 
-                  ;; output the tag, attributes and body
+                  ;; name
                   tag
-                  atts
+
+                  (loop
+                     ;; tag attributes
+                     for att in atts
+
+                     ;; each attribute is a format
+                     collect (destructuring-bind (k f &rest args)
+                                 att
+                               (list k (apply #'format nil f args))))
+
+                  ;; the inner-text
                   body
 
                   ;; no close tag if a singleton tag
@@ -106,3 +117,39 @@
 
     ;; encode each character and write it to the stream
     (format stream "~{~a~}" (map 'list #'encode string))))
+
+;;; ----------------------------------------------------
+
+(defun html-page (stream title &key meta scripts stylesheets body)
+  "Generate HTML for a page."
+  (html stream `(:html
+                 ()
+
+                 ;; html header
+                 (:head
+                  ()
+
+                  ;; title
+                  (:title () ,title)
+
+                  ;; meta tag for headers
+                  (:meta ,meta)
+
+                  ;; scripts
+                  ,@(loop
+                       for link in scripts
+
+                       ;; generate  link for each script
+                       collect `(:script ((:src ,link)
+                                          (:type "text/javascript"))))
+
+                  ;; stylesheets
+                  ,@(loop
+                       for link in stylesheets
+
+                       ;; generate a link for each stylesheet
+                       collect `(:link ((:href ,link)
+                                        (:rel "stylesheet")))))
+
+                 ;; the body
+                 (:body () ,@body))))

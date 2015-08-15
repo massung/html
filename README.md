@@ -4,7 +4,7 @@ A simple HTML rendering package for Common Lisp. It properly encodes inner text 
 
 ## Quickstart
 
-Only three (3) functions are exported:
+Only a few functions are exported:
 
     (html stream &optional form)
 
@@ -24,31 +24,36 @@ Let's try it...
     CL-USER > (html nil '(:h1 ((:class "big")) "This & That"))
     "<H1 CLASS='big'>This &amp; That</H1>"
 
+Additionally, the values of attributes are formatted!
+
     CL-USER > (html nil `(:body ()
-                           (:ul ((:class "list"))
+                           (:ul ((:class "~:[dark~;light~]-theme" t))
                              (:li () 1)
                              (:li () 2))
                            (:br)))
-    "<BODY<UL CLASS='list'><LI>1</LI><LI>2</LI></UL><BR></BODY>"
+    "<BODY<UL CLASS='light-theme'><LI>1</LI><LI>2</LI></UL><BR></BODY>"
 
-A helper function to `html` that is also exported is `html-format`. This function is defined so that it may be used with `~/` in `format`.
+While `html` is used to generate the HTML for a single tag/form, you can use the `html-page` function to generate simple HTML for an entire page:
 
-    (html-format stream form &optional colonp atp &rest args)
+    (html-page stream title &key meta scripts stylesheets body)
 
-It formats tags, attributes, and other Lisp forms as well into a stream. If the colon switch is used, then it forces HTML encoding, otherwise it does its best to determine (by tag name) whether or not to encode attributes and inner text.
+Thie will generate an `<HTML>` tag, with a `<HEAD>` and `<BODY>` for you. The `<HEAD>` tag will contain `<TITLE>`, `<META>`, `<LINK>`, and `<SCRIPT>` tags as denoted by the arguments. The *body* - if provided, should be a list of forms.
 
-Aside from the added arguments, its usage is exactly the same as `html`. But you can use it inside `format` as well:
+    CL-USER > (html-page nil
+                         "Test"
+                         :meta '(("charset" "utf-8"))
+                         :scripts '("jquery.js")
+                         :stylesheets '("dark.css")
+                         :body '((:h1 () "Hello,world!")))
+    "<HTML><HEAD><TITLE>Test</TITLE><META charset='utf-8'><SCRIPT SRC='jquery.js' TYPE='text/javascript'></SCRIPT><LINK HREF='dark.cc' REL='stylesheet'></HEAD><BODY><H1>Hello, world!</H1></BODY></HTML>"
 
-    CL-USER > (format t "~/html-format/" '(:br))
-    <BR>
-
-Finally is `html-encode`, which is used to encode attributes and inner-text. All ASCII characters in the range 32 to 127 (excluding HTML special characters) are output directly, otherwise they are encoded.
+Finally, if you just need to encode a string to be property HTML encoded, you can do that with `html-encode`.
 
     (html-encode stream string)
 
 Give it a whirl...
 
-    CL-USER > (html-encode nil "<This & That>")o
+    CL-USER > (html-encode nil "<This & That>")
     "&lt;This &amp; That&gt;"
 
 That's it!
