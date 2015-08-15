@@ -42,7 +42,7 @@ Aside from the added arguments, its usage is exactly the same as `html`. But you
     CL-USER > (format t "~/html-format/" '(:br))
     <BR>
 
-Finally is `html-encode`, which is used to encode attributes and inner-text. All ASCII characters in the range [32,127] (excluding HTML special characters) are output directly, otherwise they are encoded.
+Finally is `html-encode`, which is used to encode attributes and inner-text. All ASCII characters in the range 32 to 127 (excluding HTML special characters) are output directly, otherwise they are encoded.
 
     (html-encode stream string)
 
