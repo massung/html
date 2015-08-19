@@ -18,10 +18,10 @@
 ;;;;
 
 (defpackage :html
-  (:use :cl)
+  (:use :cl :lexer :parse)
   (:export
    #:html
-   #:html-page
+   #:html-parse
    #:html-format
    #:html-encode))
 
@@ -87,7 +87,7 @@
                   body
 
                   ;; no close tag if a singleton tag
-                  (find tag +singleton-tags+)
+                  (find tag +singleton-tags+ :test #'string-equal)
 
                   ;; close tag
                   tag)))
@@ -120,36 +120,91 @@
 
 ;;; ----------------------------------------------------
 
-(defun html-page (stream title &key meta scripts stylesheets body)
-  "Generate HTML for a page."
-  (html stream `(:html
-                 ()
+(define-lexer html-lexer (s)
 
-                 ;; html header
-                 (:head
-                  ()
+  ;; skip comments
+  ("<!%-%-.-%-%->"     (values :next-token))
 
-                  ;; title
-                  (:title () ,title)
+  ("<(%a%w*)"          (push-lexer s 'tag-lexer :tag $1))
 
-                  ;; meta tag for headers
-                  (:meta ,meta)
+  ;; close tag
+  ("</(%a%w*)%s*>"     (values :close-tag $1))
 
-                  ;; scripts
-                  ,@(loop
-                       for link in scripts
+  ;; CDATA sections
+  ("<!%[CDATA%[.-%]%]" (values :cdata $$))
 
-                       ;; generate  link for each script
-                       collect `(:script ((:src ,link)
-                                          (:type "text/javascript"))))
+  ;; anything that isn't a tag is inner html
+  (".[^<]*"            (values :inner-text $$)))
 
-                  ;; stylesheets
-                  ,@(loop
-                       for link in stylesheets
+;;; ----------------------------------------------------
 
-                       ;; generate a link for each stylesheet
-                       collect `(:link ((:href ,link)
-                                        (:rel "stylesheet")))))
+(define-lexer tag-lexer (s)
+  (">"                 (pop-lexer s :end-tag))
+  ("/>"                (pop-lexer s :singleton-tag))
 
-                 ;; the body
-                 (:body () ,@body))))
+  ;; skip whitespace
+  ("[%s%n]+"           (values :next-token))
+
+  ;; attributes
+  ("%a%w*"             (values :att $$))
+  ("="                 (values :eq))
+  ("'(.-)'|\"(.-)\""   (values :value $1)))
+
+;;; ----------------------------------------------------
+
+(define-parser html-parser
+  "HTML is just a list of tags."
+  (.many1 'tag-parser))
+
+;;; ----------------------------------------------------
+
+(define-parser tag-parser
+  "Tag name, attributes, inner-text, and close tag."
+  (.let* ((tag (.is :tag))
+          (atts (.many 'attribute-parser)))
+    (if (find tag +singleton-tags+ :test #'string-equal)
+        (>> (.one-of (.is :singleton-tag)
+                     (.is :end-tag))
+            (.ret (list tag atts)))
+      (.one-of (>> (.is :singleton-tag) (.ret (list tag atts)))
+               (>> (.is :end-tag)
+                   (.let (inner-forms 'inner-html-parser)
+                     (.ret (append (list tag atts) inner-forms))))))))
+
+;;; ----------------------------------------------------
+
+(define-parser attribute-parser
+  "Parse all the attributes in a tag."
+  (.let* ((att (.is :att))
+          (eq (.is :eq))
+          (value (.is :value)))
+    (.ret (list att value))))
+
+;;; ----------------------------------------------------
+
+(define-parser inner-html-parser
+  "Parse the text and tags inside another tag."
+  (.many-until (.one-of 'tag-parser (.is :inner-text) (.is :cdata))
+               (.is :close-tag)))
+
+;;; ----------------------------------------------------
+
+(defun html-parse (string &optional source)
+  "Parse an HTML string and generate a Lisp form from it."
+  (with-lexer (lexer 'html-lexer string :source source)
+    (with-token-reader (next-token lexer)
+      (parse 'html-parser next-token))))
+
+;;; ----------------------------------------------------
+
+(eval-when (:compile-toplevel :load-toplevel :execute)
+  (flet ((dispatch-html (s c n)
+           (declare (ignorable c n))
+           (html-parse (with-output-to-string (html)
+                         (do ((c (read-char s t nil t)
+                                 (read-char s t nil t)))
+                             ((and (char= c #\})
+                                   (let ((x (peek-char nil s)))
+                                     (char= x #\#))))
+                           (princ c html))))))
+    (set-dispatch-macro-character #\# #\{ #'dispatch-html)))
