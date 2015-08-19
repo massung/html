@@ -1,4 +1,4 @@
-;;;; Simple HTML Rendering for Common Lisp
+;;;; HTML Parsing and Rendering for Common Lisp
 ;;;;
 ;;;; Copyright (c) Jeffrey Massung
 ;;;;
@@ -34,13 +34,12 @@
 
 ;;; ----------------------------------------------------
 
-(defconstant +tag-format+
-  "<~a~:{ ~a~@[='~:/html-format/'~]~}>~{~/html-format/~}~:[</~a>~;~]"
+(defconstant +tag-format+ "<~a~:{ ~a~@[='~:/html:html-format/'~]~}>~{~/html:html-format/~}~:[</~a>~;~]"
   "Format for rendering a tag string.")
 
 ;;; ----------------------------------------------------
 
-(defconstant +singleton-tags+ '(:area :base :br :col :command :embed :hr :img :input :link :meta :param :source)
+(defconstant +singleton-tags+ '(:!doctype :area :base :br :col :command :embed :hr :img :input :link :meta :param :source)
   "Tags that do not have matching close tags.")
 
 ;;; ----------------------------------------------------
@@ -66,31 +65,37 @@
       (destructuring-bind (tag &optional atts &rest body)
           form
 
-        ;; only encode forms that are not special language tags
-        (let ((*encode-html-p* (or colonp (not (find tag +lang-tags+)))))
-          (format stream
-                  +tag-format+
+        ;; CDATA sections render special
+        (if (eq tag :cdata)
+            (format stream "<![CDATA[~{~a~}]]>" body)
 
-                  ;; name
-                  tag
+          ;; force encoding if using the : option or not a language tag
+          (let ((*encode-html-p* (or colonp (not (find tag +lang-tags+)))))
+            (format stream
+                    +tag-format+
 
-                  (loop
-                     ;; tag attributes
-                     for att in atts
+                    ;; name
+                    tag
 
-                     ;; each attribute is a format
-                     collect (destructuring-bind (k f &rest args)
-                                 att
-                               (list k (apply #'format nil f args))))
+                    (loop
+                       ;; tag attributes
+                       for att in atts
 
-                  ;; the inner-text
-                  body
+                       ;; each attribute is a format
+                       collect (destructuring-bind (k &optional f &rest args)
+                                   att
+                                 (list k (if (null args)
+                                             f
+                                           (apply #'format nil f args)))))
 
-                  ;; no close tag if a singleton tag
-                  (find tag +singleton-tags+ :test #'string-equal)
+                    ;; the inner-text
+                    body
 
-                  ;; close tag
-                  tag)))
+                    ;; no close tag if a singleton tag
+                    (find tag +singleton-tags+ :test #'string-equal)
+
+                    ;; close tag
+                    tag))))
 
     ;; not a tag form, so just print it to the stream
     (if (or *encode-html-p* colonp)
@@ -123,45 +128,85 @@
 (define-lexer html-lexer (s)
 
   ;; skip comments
-  ("<!%-%-.-%-%->"     (values :next-token))
+  ("<!%-%-.-%-%->"           (values :next-token))
 
-  ("<(%a%w*)"          (push-lexer s 'tag-lexer :tag $1))
+  ;; doctype
+  ("<!DOCTYPE[%s%n]+(%a%w*)" (push-lexer s 'doctype-lexer :doctype $1))
+
+  ;; whitespace
+  ("[%s%n]+"                 (values :whitespace " "))
+
+  ;; open tags
+  ("<(%a%w*)"                (push-lexer s 'tag-lexer :tag $1))
 
   ;; close tag
-  ("</(%a%w*)%s*>"     (values :close-tag $1))
+  ("</(%a%w*)%s*>"           (values :close-tag $1))
 
   ;; CDATA sections
-  ("<!%[CDATA%[.-%]%]" (values :cdata $$))
+  ("<!%[CDATA%[(.-)%]%]"     (values :cdata $1))
 
   ;; anything that isn't a tag is inner html
-  (".[^<]*"            (values :inner-text $$)))
+  (".[^%s%n<]*"              (values :inner-text $$)))
+
+;;; ----------------------------------------------------
+
+(define-lexer doctype-lexer (s)
+  (">"                       (pop-lexer s :end-doctype))
+
+  ;; skip whitespace
+  ("[%s%n]+"                 (values :next-token))
+
+  ;; SYSTEM and PUBLIC external references
+  ("SYSTEM[%s%n]+"           (values :system))
+  ("PUBLIC[%s%n]+"           (values :public))
+
+  ;; external reference links
+  ("'(.-)'|\"(.-)\""         (values :ref $1)))
 
 ;;; ----------------------------------------------------
 
 (define-lexer tag-lexer (s)
-  (">"                 (pop-lexer s :end-tag))
-  ("/>"                (pop-lexer s :singleton-tag))
+  (">"                       (pop-lexer s :end-tag))
+  ("/>"                      (pop-lexer s :singleton-tag))
 
   ;; skip whitespace
-  ("[%s%n]+"           (values :next-token))
+  ("[%s%n]+"                 (values :next-token))
 
   ;; attributes
-  ("%a%w*"             (values :att $$))
-  ("="                 (values :eq))
-  ("'(.-)'|\"(.-)\""   (values :value $1)))
+  ("(%a%w*)"                 (values :att $1))
+  ("="                       (values :eq))
+  ("'(.-)'|\"(.-)\""         (values :value $1)))
 
 ;;; ----------------------------------------------------
 
 (define-parser html-parser
   "HTML is just a list of tags."
-  (.many1 'tag-parser))
+  (>> (.skip (.is :whitespace))
+
+      ;; read a single element
+      (.one-of 'doctype-parser
+               'tag-parser
+               'cdata-parser
+
+               ;; just allow for random text?
+               (.is :inner-text))))
+
+;;; ----------------------------------------------------
+
+(define-parser doctype-parser
+  "Read the DOCTYPE and then parse a tag."
+  (.let (root-tag (.is :doctype))
+    (>> (.many-until (.any) (.is :end-doctype))
+
+        ;; read a tag after the declaration
+        (.let (tag (>> (.skip (.is :whitespace)) 'tag-parser))
+          (.ret `(:!doctype ((,root-tag)) ,tag))))))
 
 ;;; ----------------------------------------------------
 
 (define-parser tag-parser
   "Tag name, attributes, inner-text, and close tag."
-  (.let* ((tag (.is :tag))
-          (atts (.many 'attribute-parser)))
+  (.let* ((tag (.is :tag)) (atts (.many 'attribute-parser)))
     (if (find tag +singleton-tags+ :test #'string-equal)
         (>> (.one-of (.is :singleton-tag)
                      (.is :end-tag))
@@ -175,17 +220,31 @@
 
 (define-parser attribute-parser
   "Parse all the attributes in a tag."
-  (.let* ((att (.is :att))
-          (eq (.is :eq))
-          (value (.is :value)))
-    (.ret (list att value))))
+  (.let (att (.is :att))
+    (.opt (list att)
+          (.let (value (>> (.is :eq) (.is :value)))
+            (.ret (list att value))))))
 
 ;;; ----------------------------------------------------
 
 (define-parser inner-html-parser
   "Parse the text and tags inside another tag."
-  (.many-until (.one-of 'tag-parser (.is :inner-text) (.is :cdata))
-               (.is :close-tag)))
+  (.let (forms (.many (.one-of 'tag-parser
+                               'cdata-parser
+
+                               ;; whitespace coalesces
+                               (.is :whitespace)
+                               (.is :inner-text))))
+
+    ;; in HTML most close tags are optional, so ignore them
+    (>> (.maybe (.is :close-tag)) (.ret forms))))
+
+;;; ----------------------------------------------------
+
+(define-parser cdata-parser
+  "Parse a CDATA section."
+  (.let (data (.is :cdata))
+    (.ret (list :cdata nil data))))
 
 ;;; ----------------------------------------------------
 
@@ -198,13 +257,12 @@
 ;;; ----------------------------------------------------
 
 (eval-when (:compile-toplevel :load-toplevel :execute)
-  (flet ((dispatch-html (s c n)
-           (declare (ignorable c n))
-           (html-parse (with-output-to-string (html)
-                         (do ((c (read-char s t nil t)
-                                 (read-char s t nil t)))
-                             ((and (char= c #\})
-                                   (let ((x (peek-char nil s)))
-                                     (char= x #\#))))
-                           (princ c html))))))
-    (set-dispatch-macro-character #\# #\{ #'dispatch-html)))
+  (flet ((read-html (s c)
+           (declare (ignore c))
+           (let ((html (html-parse (with-output-to-string (html)
+                                     (do ((c (read-char s t nil t)
+                                             (read-char s t nil t)))
+                                         ((char= c #\}))
+                                       (princ c html))))))
+             (list 'quote html))))
+    (set-macro-character #\{ #'read-html)))
