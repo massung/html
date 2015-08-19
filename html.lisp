@@ -136,13 +136,13 @@
   ("<!DOCTYPE[%s%n]+(%a%w*)" (push-lexer s 'doctype-lexer :doctype $1))
 
   ;; whitespace
-  ("[%s%n]+"                 (values :whitespace " "))
+  ("[%s%n]+"                 (values :whitespace #\space))
 
   ;; open tags
-  ("<(%a%w*)"                (push-lexer s 'tag-lexer :tag $1))
+  ("<([%a_:][%w:.-]*)"       (push-lexer s 'tag-lexer :tag $1))
 
   ;; close tag
-  ("</(%a%w*)%s*>"           (values :close-tag $1))
+  ("</([%a_:][%w:.-]*)%s*>"  (values :close-tag $1))
 
   ;; CDATA sections
   ("<!%[CDATA%[(.-)%]%]"     (values :cdata $1))
@@ -184,7 +184,7 @@
   ("[%s%n]+"                 (values :next-token))
 
   ;; attributes
-  ("(%a%w*)"                 (values :att $1))
+  ("([%a_:][%w:.-]*)"        (values :att $1))
   ("="                       (values :eq))
   ("'(.-)'|\"(.-)\""         (values :value $1)))
 
