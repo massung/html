@@ -127,6 +127,11 @@
 
 ;;; ----------------------------------------------------
 
+(defvar *tag-stack* nil
+  "Stack of the tags currently being tokenized.")
+
+;;; ----------------------------------------------------
+
 (define-lexer html-lexer (s)
 
   ;; skip whitespace and comments
@@ -139,7 +144,10 @@
      (error "Unrecognized HTML declaration tag ~s" $1)))
 
   ;; open tag
-  ("<([%a_:][%w:.-]*)" (swap-lexer s 'attribute-lexer :tag $1)))
+  ("<([%a_:][%w:.-]*)"
+   (multiple-value-prog1
+       (push-lexer s 'attribute-lexer :tag $1)
+     (push $1 *tag-stack*))))
 
 ;;; ----------------------------------------------------
 
@@ -158,9 +166,13 @@
   ;; skip whitespace
   ("[%s%n]+" :next-token)
 
-  ;; end of tag tokens
+  ;; singleton tag
   ("/>" (pop-lexer s :singleton-tag))
-  (">" (swap-lexer s 'tag-lexer :end-tag))
+
+  ;; end of attributes, beginning of inner text
+  (">" (if (find (first *tag-stack*) +lang-tags+ :test #'string-equal)
+           (swap-lexer s 'lang-lexer :end-tag)
+         (swap-lexer s 'tag-lexer :end-tag)))
 
   ;; attribute key
   ("([%a_:][%w:.-]*)" (values :att $1))
@@ -188,7 +200,10 @@
   ("<!%[CDATA%[(.-)%]%]" (values :cdata $1))
 
   ;; child tag
-  ("<([%a_:][%w:.-]*)" (push-lexer s 'attribute-lexer :tag $1))
+  ("<([%a_:][%w:.-]*)"
+   (multiple-value-prog1
+       (push-lexer s 'attribute-lexer :tag $1)
+     (push $1 *tag-stack*)))
 
   ;; character references
   ("&#x(%x+);" (values :char (character-ref $1 :radix 16)))
@@ -197,6 +212,19 @@
 
   ;; anything that isn't a tag or reference is inner html
   (".[^%s%n&<]*" (values :inner-text $$)))
+
+;;; ----------------------------------------------------
+
+(define-lexer lang-lexer (s)
+
+  ;; close tag
+  ("</([%a_:][%w:.-]*)%s*>" (pop-lexer s :close-tag $1))
+
+  ;; quoted strings
+  ("'.-'|\".-\"" (values :inner-text $$))
+
+  ;; all text up to the close tag or quoted string
+  (".[^'\"<]*" (values :inner-text $$)))
 
 ;;; ----------------------------------------------------
 
@@ -270,28 +298,5 @@
   "Parse an HTML string and generate a Lisp form from it."
   (with-lexer (lexer 'html-lexer string :source source)
     (with-token-reader (next-token lexer)
-      (parse 'html-parser next-token :initial-state req))))
-
-;;; ----------------------------------------------------
-
-(eval-when (:compile-toplevel :load-toplevel :execute)
-  (flet ((read-html (s c)
-           (declare (ignore c))
-           (let ((html (with-output-to-string (html)
-                         (flet ((read-quote (quo)
-                                  (do ((c (read-char s t nil t)
-                                          (read-char s t nil t)))
-                                      ((char= c quo)
-                                       (princ c html))
-                                    (princ c html))))
-
-                           ;; read until the terminal for tags
-                           (do ((c (read-char s t nil t)
-                                   (read-char s t nil t)))
-                               ((char= c #\}))
-                             (princ c html)
-                             (when (or (char= c #\")
-                                       (char= c #\'))
-                               (read-quote c)))))))
-             (list 'quote (html-parse html)))))
-    (set-macro-character #\{ #'read-html)))
+      (let ((*tag-stack* nil))
+        (parse 'html-parser next-token :initial-state req)))))
