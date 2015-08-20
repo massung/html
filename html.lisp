@@ -129,99 +129,101 @@
 
 (define-lexer html-lexer (s)
 
-  ;; skip comments
-  ("<!%-%-.-%-%->"           (values :next-token))
+  ;; skip whitespace and comments
+  ("[%s%n]+|<!%-%-.-%-%->" :next-token)
 
-  ;; doctype
-  ("<!DOCTYPE[%s%n]+(%a%w*)" (push-lexer s 'doctype-lexer :doctype $1))
+  ;; declaration tags
+  ("<!(%a+)[%s%n]+([%a_:][%w:.-]*)"
+   (if (string-equal $1 :doctype)
+       (push-lexer s 'doctype-lexer :doctype $2)
+     (error "Unrecognized HTML declaration tag ~s" $1)))
 
-  ;; whitespace
-  ("[%s%n]+"                 (values :whitespace #\space))
-
-  ;; open tags
-  ("<([%a_:][%w:.-]*)"       (push-lexer s 'tag-lexer :tag $1))
-
-  ;; close tag
-  ("</([%a_:][%w:.-]*)%s*>"  (values :close-tag $1))
-
-  ;; CDATA sections
-  ("<!%[CDATA%[(.-)%]%]"     (values :cdata $1))
-
-  ;; character references
-  ("&#x(%x+);"               (let ((n (parse-integer $1 :radix 16)))
-                               (values :char (code-char n))))
-  ("&#(%d+);"                (let ((n (parse-integer $1 :radix 10)))
-                               (values :char (code-char n))))
-
-  ;; entity references
-  ("&(.-);"                  (values :char (html-entity $1)))
-
-  ;; anything that isn't a tag is inner html
-  (".[^%s%n&<]*"             (values :inner-text $$)))
+  ;; open tag
+  ("<([%a_:][%w:.-]*)" (swap-lexer s 'attribute-lexer :tag $1)))
 
 ;;; ----------------------------------------------------
 
 (define-lexer doctype-lexer (s)
-  (">"                       (pop-lexer s :end-doctype))
 
-  ;; skip whitespace
-  ("[%s%n]+"                 (values :next-token))
+  ;; end of declaration
+  (">" (pop-lexer s :end-doctype))
 
-  ;; SYSTEM and PUBLIC external references
-  ("SYSTEM[%s%n]+"           (values :system))
-  ("PUBLIC[%s%n]+"           (values :public))
-
-  ;; external reference links
-  ("'(.-)'|\"(.-)\""         (values :ref $1)))
+  ;; skip whitespace, named tokens, and quoted values
+  ("[%s%n]+|[%a_:][%w:.-]*|'.-'|\".-\"" :next-token))
 
 ;;; ----------------------------------------------------
 
 (define-lexer tag-lexer (s)
-  (">"                       (pop-lexer s :end-tag))
-  ("/>"                      (pop-lexer s :singleton-tag))
+
+  ;; coalesce whitespace
+  ("[%s%n]+" (values :whitespace #\space))
+
+  ;; close tag
+  ("</([%a_:][%w:.-]*)%s*>" (pop-lexer s :close-tag $1))
+
+  ;; skip comments
+  ("<!%-%-.-%-%->" :next-token)
+
+  ;; CDATA sections
+  ("<!%[CDATA%[(.-)%]%]" (values :cdata $1))
+
+  ;; child tag
+  ("<([%a_:][%w:.-]*)" (push-lexer s 'attribute-lexer :tag $1))
+
+  ;; character references
+  ("&#x(%x+);" (values :char (character-ref $1 :radix 16)))
+  ("&#(%d+);" (values :char (character-ref $1 :radix 10)))
+  ("&(.-);" (values :char (entity-ref $1)))
+
+  ;; anything that isn't a tag or reference is inner html
+  (".[^%s%n&<]*" (values :inner-text $$)))
+
+;;; ----------------------------------------------------
+
+(define-lexer attribute-lexer (s)
 
   ;; skip whitespace
-  ("[%s%n]+"                 (values :next-token))
+  ("[%s%n]+" :next-token)
+
+  ;; end of tag tokens
+  ("/>" (pop-lexer s :singleton-tag))
+  (">" (swap-lexer s 'tag-lexer :end-tag))
+
+  ;; assignment token
+  ("=" :eq)
 
   ;; attributes
-  ("([%a_:][%w:.-]*)"        (values :att $1))
-  ("="                       (values :eq))
-  ("'(.-)'|\"(.-)\""         (values :value $1)))
+  ("([%a_:][%w:.-]*)" (values :att $1))
+  ("'(.-)'|\"(.-)\"" (values :value $1)))
 
 ;;; ----------------------------------------------------
 
 (define-parser html-parser
   "HTML is just a list of tags."
-  (>> (.skip (.is :whitespace))
-
-      ;; read a single element
-      (.one-of 'doctype-parser
-               'tag-parser
-               'cdata-parser
-
-               ;; just allow for random text?
-               (.is :inner-text))))
+  (.one-of 'doctype-parser 'tag-parser))
 
 ;;; ----------------------------------------------------
 
 (define-parser doctype-parser
   "Read the DOCTYPE and then parse a tag."
-  (.let (root-tag (.is :doctype))
-    (>> (.many-until (.any) (.is :end-doctype))
-
-        ;; read a tag after the declaration
+  (.let (root (.is :doctype))
+    (>> (.is :end-doctype)
         (.let (tag (>> (.skip (.is :whitespace)) 'tag-parser))
-          (.ret `(:!doctype ((,root-tag)) ,tag))))))
+          (.ret `(:!doctype ((,root)) ,tag))))))
 
 ;;; ----------------------------------------------------
 
 (define-parser tag-parser
   "Tag name, attributes, inner-text, and close tag."
   (.let* ((tag (.is :tag)) (atts (.many 'attribute-parser)))
+
+    ;; singleton tags have no inner content
     (if (find tag +singleton-tags+ :test #'string-equal)
         (>> (.one-of (.is :singleton-tag)
                      (.is :end-tag))
             (.ret (list tag atts)))
+
+      ;; check for hard-coded singleton tag or parse content
       (.one-of (>> (.is :singleton-tag) (.ret (list tag atts)))
                (>> (.is :end-tag)
                    (.let (inner-forms 'inner-html-parser)
@@ -233,6 +235,8 @@
   "Parse all the attributes in a tag."
   (.let (att (.is :att))
     (.opt (list att)
+
+          ;; html attribute value are optional
           (.let (value (>> (.is :eq) (.is :value)))
             (.ret (list att value))))))
 

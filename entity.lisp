@@ -21,7 +21,13 @@
 
 ;;; ----------------------------------------------------
 
-(defun html-entity (name)
+(defun character-ref (code &key (radix 10))
+  "Parse the character code and return the character."
+  (code-char (parse-integer code :radix radix)))
+
+;;; ----------------------------------------------------
+
+(defun entity-ref (name)
   "Returns the character for a given entity name."
   (let ((entities '(("lt"      . #\<)
                     ("gt"      . #\>)
