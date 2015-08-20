@@ -44,8 +44,31 @@
 
 ;;; ----------------------------------------------------
 
+(defconstant +opt-singleton-tags+ '(:body :colgroup :dd :dt :head :html :li :optgroup :option :p :tbody :td :tfoot :th :thead :tr)
+  "Tags that are not strictly required to be closed.")
+
+;;; ----------------------------------------------------
+
 (defconstant +lang-tags+ '(:style :script)
   "Tags that do not encode their inner HTML text.")
+
+;;; ----------------------------------------------------
+
+(defun singleton-tag-p (tag)
+  "T if tag is considered a singleton tag."
+  (find tag +singleton-tags+ :test #'string-equal))
+
+;;; ----------------------------------------------------
+
+(defun opt-singleton-tag-p (tag)
+  "T if tag is allowed to not have a matching close tag."
+  (find tag +opt-singleton-tags+ :test #'string-equal))
+
+;;; ----------------------------------------------------
+
+(defun lang-tag-p (tag)
+  "T if tag is a language tag."
+  (find tag +lang-tags+ :test #'string-equal))
 
 ;;; ----------------------------------------------------
 
@@ -70,9 +93,8 @@
             (format stream "<![CDATA[~{~a~}]]>" body)
 
           ;; only encode if already encoding and not a language tag
-          (let ((*encode-html-p* (and *encode-html-p*
-                                      (not colonp)
-                                      (not (find tag +lang-tags+)))))
+          (let ((*encode-html-p* (when *encode-html-p*
+                                   (not (or colonp (lang-tag-p tag))))))
             (format stream
                     +tag-format+
 
@@ -94,7 +116,7 @@
                     body
 
                     ;; no close tag if a singleton tag
-                    (find tag +singleton-tags+ :test #'string-equal)
+                    (singleton-tag-p tag)
 
                     ;; close tag
                     tag))))
@@ -170,7 +192,7 @@
   ("/>" (pop-lexer s :singleton-tag))
 
   ;; end of attributes, beginning of inner text
-  (">" (if (find (first *tag-stack*) +lang-tags+ :test #'string-equal)
+  (">" (if (lang-tag-p (first *tag-stack*))
            (swap-lexer s 'lang-lexer :end-tag)
          (swap-lexer s 'tag-lexer :end-tag)))
 
@@ -248,7 +270,7 @@
   (.let* ((tag (.is :tag)) (atts (.many 'attribute-parser)))
 
     ;; singleton tags have no inner content
-    (if (find tag +singleton-tags+ :test #'string-equal)
+    (if (singleton-tag-p tag)
         (>> (.one-of (.is :singleton-tag)
                      (.is :end-tag))
             (.ret (list tag atts)))
@@ -256,6 +278,7 @@
       ;; check for hard-coded singleton tag or parse content
       (.one-of (>> (.is :singleton-tag) (.ret (list tag atts)))
                (>> (.is :end-tag)
+                   (.push tag)
                    (.let (inner-forms 'inner-html-parser)
                      (.ret (append (list tag atts) inner-forms))))))))
 
@@ -282,8 +305,13 @@
                                (.is :char)
                                (.is :inner-text))))
 
-    ;; in HTML most close tags are optional, so ignore them
-    (>> (.maybe (.is :close-tag)) (.ret forms))))
+    ;; ensure that the close tag matches
+    (.let (top (.pop))
+      (.one-of (.let (tag (.is :close-tag))
+                 (if (string-equal tag top)
+                     (.ret forms)
+                   (.fail "Tag mismatch; expected ~s got ~s" top tag)))
+               (.fail "Missing close tag for ~s" top)))))
 
 ;;; ----------------------------------------------------
 
