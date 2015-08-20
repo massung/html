@@ -84,11 +84,11 @@
                        for att in atts
 
                        ;; each attribute is a format
-                       collect (destructuring-bind (k &optional f &rest args)
+                       collect (destructuring-bind (k &optional f &rest xs)
                                    att
-                                 (list k (if (null args)
+                                 (list k (if (null xs)
                                              f
-                                           (apply #'format nil f args)))))
+                                           (apply #'format nil f xs)))))
 
                     ;; the inner-text
                     body
@@ -153,16 +153,36 @@
 
 ;;; ----------------------------------------------------
 
+(define-lexer attribute-lexer (s)
+
+  ;; skip whitespace
+  ("[%s%n]+" :next-token)
+
+  ;; end of tag tokens
+  ("/>" (pop-lexer s :singleton-tag))
+  (">" (swap-lexer s 'tag-lexer :end-tag))
+
+  ;; attribute key
+  ("([%a_:][%w:.-]*)" (values :att $1))
+
+  ;; quoted attribute values
+  ("=[%s%n]*(?'(.-)'|\"(.-)\")" (values :value $1))
+
+  ;; unquoted attribute values
+  ("=[%s%n]*([^%s%n`'\"=<>]+)" (values :value $1)))
+
+;;; ----------------------------------------------------
+
 (define-lexer tag-lexer (s)
 
   ;; coalesce whitespace
   ("[%s%n]+" (values :whitespace #\space))
 
-  ;; close tag
-  ("</([%a_:][%w:.-]*)%s*>" (pop-lexer s :close-tag $1))
-
   ;; skip comments
   ("<!%-%-.-%-%->" :next-token)
+
+  ;; close tag
+  ("</([%a_:][%w:.-]*)%s*>" (pop-lexer s :close-tag $1))
 
   ;; CDATA sections
   ("<!%[CDATA%[(.-)%]%]" (values :cdata $1))
@@ -177,24 +197,6 @@
 
   ;; anything that isn't a tag or reference is inner html
   (".[^%s%n&<]*" (values :inner-text $$)))
-
-;;; ----------------------------------------------------
-
-(define-lexer attribute-lexer (s)
-
-  ;; skip whitespace
-  ("[%s%n]+" :next-token)
-
-  ;; end of tag tokens
-  ("/>" (pop-lexer s :singleton-tag))
-  (">" (swap-lexer s 'tag-lexer :end-tag))
-
-  ;; assignment token
-  ("=" :eq)
-
-  ;; attributes
-  ("([%a_:][%w:.-]*)" (values :att $1))
-  ("'(.-)'|\"(.-)\"" (values :value $1)))
 
 ;;; ----------------------------------------------------
 
@@ -234,10 +236,10 @@
 (define-parser attribute-parser
   "Parse all the attributes in a tag."
   (.let (att (.is :att))
-    (.opt (list att)
+    (.opt (list att t)
 
           ;; html attribute value are optional
-          (.let (value (>> (.is :eq) (.is :value)))
+          (.let (value (.is :value))
             (.ret (list att value))))))
 
 ;;; ----------------------------------------------------
@@ -264,21 +266,32 @@
 
 ;;; ----------------------------------------------------
 
-(defun html-parse (string &optional source)
+(defun html-parse (string &optional source req)
   "Parse an HTML string and generate a Lisp form from it."
   (with-lexer (lexer 'html-lexer string :source source)
     (with-token-reader (next-token lexer)
-      (parse 'html-parser next-token))))
+      (parse 'html-parser next-token :initial-state req))))
 
 ;;; ----------------------------------------------------
 
 (eval-when (:compile-toplevel :load-toplevel :execute)
   (flet ((read-html (s c)
            (declare (ignore c))
-           (let ((html (html-parse (with-output-to-string (html)
-                                     (do ((c (read-char s t nil t)
-                                             (read-char s t nil t)))
-                                         ((char= c #\}))
-                                       (princ c html))))))
-             (list 'quote html))))
+           (let ((html (with-output-to-string (html)
+                         (flet ((read-quote (quo)
+                                  (do ((c (read-char s t nil t)
+                                          (read-char s t nil t)))
+                                      ((char= c quo)
+                                       (princ c html))
+                                    (princ c html))))
+
+                           ;; read until the terminal for tags
+                           (do ((c (read-char s t nil t)
+                                   (read-char s t nil t)))
+                               ((char= c #\}))
+                             (princ c html)
+                             (when (or (char= c #\")
+                                       (char= c #\'))
+                               (read-quote c)))))))
+             (list 'quote (html-parse html)))))
     (set-macro-character #\{ #'read-html)))
