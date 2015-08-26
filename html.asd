@@ -10,6 +10,5 @@
   :license "Apache 2.0"
   :description "HTML Rendering for Common Lisp."
   :serial t
-  :components ((:file "html")
-               (:file "entity"))
-  :depends-on ())
+  :components ((:file "html"))
+  :depends-on ("markup"))

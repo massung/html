@@ -18,12 +18,10 @@
 ;;;;
 
 (defpackage :html
-  (:use :cl :lexer :parse)
+  (:use :cl :lexer :parse :markup)
   (:export
    #:html
-   #:html-parse
-   #:html-format
-   #:html-encode))
+   #:html-parse))
 
 (in-package :html)
 
@@ -72,7 +70,7 @@
 
 ;;; ----------------------------------------------------
 
-(defun html (stream form)
+(defun html (form &optional stream)
   "Renders HTML to a string."
   (if (null stream)
       (with-output-to-string (s)
@@ -123,29 +121,8 @@
 
     ;; not a tag form, so just print it to the stream
     (if (or *encode-html-p* colonp)
-        (html-encode stream (princ-to-string form))
+        (write-string (markup-encode (princ-to-string form)) stream)
       (princ form stream))))
-
-;;; ----------------------------------------------------
-
-(defun html-encode (stream string)
-  "Replace characters from HTML to &entity; references."
-  (flet ((encode (c)
-           (case c
-             (#\" "&quot;")
-             (#\' "&apos;")
-             (#\< "&lt;")
-             (#\> "&gt;")
-             (#\& "&amp;")
-
-             ;; non-ascii characters
-             (otherwise (let ((n (char-code c)))
-                          (if (<= 32 n 127)
-                              c
-                            (format nil "&#~4,'0d;" n)))))))
-
-    ;; encode each character and write it to the stream
-    (format stream "~{~a~}" (map 'list #'encode string))))
 
 ;;; ----------------------------------------------------
 
@@ -252,16 +229,16 @@
 
 (define-parser html-parser
   "HTML is just a list of tags."
-  (.one-of 'doctype-parser 'tag-parser))
+  (.either 'doctype-parser 'tag-parser))
 
 ;;; ----------------------------------------------------
 
 (define-parser doctype-parser
   "Read the DOCTYPE and then parse a tag."
   (.let (root (.is :doctype))
-    (>> (.is :end-doctype)
-        (.let (tag (>> (.skip (.is :whitespace)) 'tag-parser))
-          (.ret `(:!doctype ((,root)) ,tag))))))
+    (.do (.is :end-doctype)
+         (.let (tag (.do (.skip-many (.is :whitespace)) 'tag-parser))
+           (.ret `(:!doctype ((,root)) ,tag))))))
 
 ;;; ----------------------------------------------------
 
@@ -271,16 +248,16 @@
 
     ;; singleton tags have no inner content
     (if (singleton-tag-p tag)
-        (>> (.one-of (.is :singleton-tag)
-                     (.is :end-tag))
-            (.ret (list tag atts)))
+        (.do (.or (.is :singleton-tag)
+                  (.is :end-tag))
+             (.ret (list tag atts)))
 
       ;; check for hard-coded singleton tag or parse content
-      (.one-of (>> (.is :singleton-tag) (.ret (list tag atts)))
-               (>> (.is :end-tag)
-                   (.push tag)
-                   (.let (inner-forms 'inner-html-parser)
-                     (.ret (append (list tag atts) inner-forms))))))))
+      (.or (.do (.is :singleton-tag) (.ret (list tag atts)))
+           (.do (.is :end-tag)
+                (.push tag)
+                (.let (inner-forms 'inner-html-parser)
+                  (.ret (append (list tag atts) inner-forms))))))))
 
 ;;; ----------------------------------------------------
 
@@ -297,21 +274,21 @@
 
 (define-parser inner-html-parser
   "Parse the text and tags inside another tag."
-  (.let (forms (.many (.one-of 'tag-parser
-                               'cdata-parser
+  (.let (forms (.many (.or 'tag-parser
+                           'cdata-parser
 
-                               ;; whitespace coalesces
-                               (.is :whitespace)
-                               (.is :char)
-                               (.is :inner-text))))
+                           ;; whitespace coalesces
+                           (.is :whitespace)
+                           (.is :char)
+                           (.is :inner-text))))
 
     ;; ensure that the close tag matches
     (.let (top (.pop))
-      (.one-of (.let (tag (.is :close-tag))
-                 (if (string-equal tag top)
-                     (.ret forms)
-                   (.fail "Tag mismatch; expected ~s got ~s" top tag)))
-               (.fail "Missing close tag for ~s" top)))))
+      (.or (.let (tag (.is :close-tag))
+             (if (string-equal tag top)
+                 (.ret forms)
+               (.fail "Tag mismatch; expected ~s got ~s" top tag)))
+           (.fail "Missing close tag for ~s" top)))))
 
 ;;; ----------------------------------------------------
 
@@ -328,3 +305,4 @@
     (with-token-reader (next-token lexer)
       (let ((*tag-stack* nil))
         (parse 'html-parser next-token :initial-state req)))))
+
