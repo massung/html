@@ -6,11 +6,10 @@ A simple HTML rendering package for Common Lisp. It properly encodes inner text 
 
 Only a few functions are exported:
 
-    (html stream &optional form)
+    (html form &optional stream)
+    (html-parse string &optional source)
 
-This is the function you'll use most often.
-
-It writes a Lisp *form* (as HTML) to *stream*. If *stream* is `nil` then it will output the form to a string.
+The `html` function converts a Lisp *form* (as HTML) into a string (optionally writing to a stream instead). While the `html-parse` function will take an HTML string and parse it into a Lisp form.
 
 List forms are considered to be tags, and are expected to be in form:
 
@@ -27,33 +26,13 @@ Let's try it...
 Additionally, the values of attributes are formatted!
 
     CL-USER > (html nil `(:body ()
-                           (:ul ((:class "~:[dark~;light~]-theme" t))
-                             (:li () 1)
-                             (:li () 2))
-                           (:br)))
+                (:ul ((:class "~:[dark~;light~]-theme" t))
+                  (:li () 1)
+                  (:li () 2))
+                (:br)))
     "<BODY<UL CLASS='light-theme'><LI>1</LI><LI>2</LI></UL><BR></BODY>"
 
-While `html` is used to generate the HTML for a single tag/form, you can use the `html-page` function to generate simple HTML for an entire page:
-
-    (html-page stream title &key meta scripts stylesheets body)
-
-Thie will generate an `<HTML>` tag, with a `<HEAD>` and `<BODY>` for you. The `<HEAD>` tag will contain `<TITLE>`, `<META>`, `<LINK>`, and `<SCRIPT>` tags as denoted by the arguments. The *body* - if provided, should be a list of forms.
-
-    CL-USER > (html-page nil
-                         "Test"
-                         :meta '(("charset" "utf-8"))
-                         :scripts '("jquery.js")
-                         :stylesheets '("dark.css")
-                         :body '((:h1 () "Hello,world!")))
-    "<HTML><HEAD><TITLE>Test</TITLE><META charset='utf-8'><SCRIPT SRC='jquery.js' TYPE='text/javascript'></SCRIPT><LINK HREF='dark.cc' REL='stylesheet'></HEAD><BODY><H1>Hello, world!</H1></BODY></HTML>"
-
-Finally, if you just need to encode a string to be property HTML encoded, you can do that with `html-encode`.
-
-    (html-encode stream string)
-
-Give it a whirl...
-
-    CL-USER > (html-encode nil "<This & That>")
-    "&lt;This &amp; That&gt;"
+    CL-USER > (html-parse *)
+    ("BODY" NIL ("UL" (("CLASS" "light-theme")) ("LI" NIL "1") ("LI" NIL "2")) ("BR" NIL))
 
 That's it!

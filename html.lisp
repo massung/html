@@ -299,10 +299,10 @@
 
 ;;; ----------------------------------------------------
 
-(defun html-parse (string &optional source req)
+(defun html-parse (string &optional source)
   "Parse an HTML string and generate a Lisp form from it."
   (with-lexer (lexer 'html-lexer string :source source)
     (with-token-reader (next-token lexer)
       (let ((*tag-stack* nil))
-        (parse 'html-parser next-token :initial-state req)))))
+        (parse 'html-parser next-token)))))
 
