@@ -16,10 +16,10 @@ The `html-render` function converts a Lisp *form* (as HTML) into a string (optio
 
 Let's try it...
 
-    CL-USER > (html "Hello, world!")
+    CL-USER > (html-render "Hello, world!")
     "Hello, world!"
 
-    CL-USER > (html '(:h1 ((:class "<wow>")) "This & That"))
+    CL-USER > (html-render '(:h1 ((:class "<wow>")) "This & That"))
     "<H1 CLASS='&lt;wow&gt;'>This &amp; That</H1>"
 
 The `html-format` function is designed to be callable from within a `format` call using [`~/`](http://www.lispworks.com/documentation/HyperSpec/Body/22_ced.htm). In fact, `html-render` simply wraps a call to `html-format`.
@@ -48,7 +48,7 @@ After the function, any keyword arguments are asssumed to be attributes, followe
     CL-USER > (html-render (<td> :nowrap nil))
     "<TD NOWRAP></TD>"
 
-Every HTML5 tag is automatically supported, but you can also create your own tags as well using the `define-html-tag` macro:
+Every valid HTML5 tag has a corresponding tag function, but you can also create your own tags as well using the `define-html-tag` macro:
 
     (define-html-tag name)
 
