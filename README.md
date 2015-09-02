@@ -60,4 +60,20 @@ The *name* argument should be the tag that is output to the s-expression, and so
     CL-USER > (html-render (<foo> :bar "baz" "Look, ma, my own tag!"))
     "<FOO BAR='baz'>Look, ma, my own tag!</FOO>"
 
+## Rendering CDATA
+
+The `html-format` (and render) functions can also handle render of CDATA blocks in HTML. To do this, simply render a list in the form:
+
+    (:CDATA &rest content)
+
+All the content will be wrapped into a `<![CDATA[..content..]]>` block.
+
+    CL-USER > (html-render '(:cdata "<this & that>"))
+    "<![CDATA[<this & that>]]>"
+
+And, of course this can be used from within html tags generators as well.
+
+    CL-USER > (html-render (<b> (list :cdata (format nil "~{~a~^,~}" '(a b c)))))
+    "<B><![CDATA[A,B,C]]></B>"
+
 That's it!

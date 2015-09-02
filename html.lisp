@@ -32,12 +32,12 @@
 
 (defun html-render (form)
   "Renders HTML to a string."
-  (format nil "~/html-format/" form))
+  (format nil "~/html:html-format/" form))
 
 ;;; ----------------------------------------------------
 
 (defconstant +tag-format+
-  "<~a~:{ ~a~@[='~@/html-format/'~]~}>~{~/html-format/~}~:[</~a>~;~]"
+  "<~a~:{ ~a~@[='~@/html:html-format/'~]~}>~{~/html:html-format/~}~@[</~a>~]"
   "Format for rendering a tag string.")
 
 ;;; ----------------------------------------------------
@@ -82,8 +82,9 @@
             tag
             atts
             content
-            singleton-tag-p
-            tag)))
+
+            ;; singleton tags do not close their open tag
+            (unless singleton-tag-p tag))))
 
 ;;; ----------------------------------------------------
 
