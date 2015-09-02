@@ -37,7 +37,7 @@
 ;;; ----------------------------------------------------
 
 (defconstant +tag-format+
-  "<~a~:{ ~a~@[='~:/html-format/'~]~}>~{~/html-format/~}~:[</~a>~;~]"
+  "<~a~:{ ~a~@[='~@/html-format/'~]~}>~{~/html-format/~}~:[</~a>~;~]"
   "Format for rendering a tag string.")
 
 ;;; ----------------------------------------------------
@@ -48,20 +48,36 @@
 
 ;;; ----------------------------------------------------
 
+(defconstant +language-tags+ '(script style)
+  "Tags that do not HTML encode their contents.")
+
+;;; ----------------------------------------------------
+
+(defvar *encode-html-p* t
+  "Contents of a tag should be encoded.")
+
+;;; ----------------------------------------------------
+
 (defun html-format (stream form &optional colonp atp &rest args)
   "Output an form to a stream as HTML."
-  (declare (ignore colonp atp args))
+  (declare (ignore colonp args))
   (if (listp form)
       (if (eq (first form) :cdata)
           (format stream "<![CDATA[~{~a~}]]>" (rest form))
         (apply 'html-format-tag stream form))
-    (write-string (markup-encode (princ-to-string form)) stream)))
+    (if (and (null atp) (null *encode-html-p*))
+        (princ form stream)
+      (write-string (markup-encode (princ-to-string form)) stream))))
 
 ;;; ----------------------------------------------------
 
 (defun html-format-tag (stream tag &optional atts &rest content)
   "Output a tag form to a stream."
-  (let ((singleton-tag-p (find tag +singleton-tags+ :test #'string-equal)))
+  (let* ((language-tag-p (find tag +language-tags+ :test 'string-equal))
+         (singleton-tag-p (find tag +singleton-tags+ :test 'string-equal))
+
+         ;; disable HTML-encoding of content in a language tag
+         (*encode-html-p* (not language-tag-p)))
     (format stream +tag-format+
             tag
             atts
@@ -91,7 +107,8 @@
 
                         ;; construct the list to be rendered
                         finally (return `(,',name ,atts ,@content))))))
-       (prog1 symbol (export symbol *package*)))))
+       (prog1 symbol
+         (export symbol *package*)))))
 
 ;;; ----------------------------------------------------
 
