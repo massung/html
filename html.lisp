@@ -1,4 +1,4 @@
-;;;; HTML Parsing and Rendering for Common Lisp
+;;;; HTML Rendering for Common Lisp
 ;;;;
 ;;;; Copyright (c) Jeffrey Massung
 ;;;;
@@ -18,291 +18,188 @@
 ;;;;
 
 (defpackage :html
-  (:use :cl :lexer :parse :markup)
+  (:use :cl :markup)
   (:export
    #:html
-   #:html-parse))
+   #:html-format
+
+   ;; macros
+   #:define-html-tag))
 
 (in-package :html)
 
 ;;; ----------------------------------------------------
 
-(defparameter *encode-html-p* t
-  "T if forms that are rendered as HTML should be encoded.")
+(defun html (form &optional stream)
+  "Renders HTML to a string."
+  (format stream "~/html-format/" form))
 
 ;;; ----------------------------------------------------
 
-(defconstant +tag-format+ "<~a~:{ ~a~@[='~:/html:html-format/'~]~}>~{~/html:html-format/~}~:[</~a>~;~]"
+(defconstant +tag-format+
+  "<~a~:{ ~a~@[='~:/html-format/'~]~}>~{~/html-format/~}~:[</~a>~;~]"
   "Format for rendering a tag string.")
 
 ;;; ----------------------------------------------------
 
-(defconstant +singleton-tags+ '(:!doctype :area :base :br :col :command :embed :hr :img :input :link :meta :param :source)
+(defconstant +singleton-tags+
+  '(area base br col command embed hr img input link meta param source)
   "Tags that do not have matching close tags.")
-
-;;; ----------------------------------------------------
-
-(defconstant +opt-singleton-tags+ '(:body :colgroup :dd :dt :head :html :li :optgroup :option :p :tbody :td :tfoot :th :thead :tr)
-  "Tags that are not strictly required to be closed.")
-
-;;; ----------------------------------------------------
-
-(defconstant +lang-tags+ '(:style :script)
-  "Tags that do not encode their inner HTML text.")
-
-;;; ----------------------------------------------------
-
-(defun singleton-tag-p (tag)
-  "T if tag is considered a singleton tag."
-  (find tag +singleton-tags+ :test #'string-equal))
-
-;;; ----------------------------------------------------
-
-(defun opt-singleton-tag-p (tag)
-  "T if tag is allowed to not have a matching close tag."
-  (find tag +opt-singleton-tags+ :test #'string-equal))
-
-;;; ----------------------------------------------------
-
-(defun lang-tag-p (tag)
-  "T if tag is a language tag."
-  (find tag +lang-tags+ :test #'string-equal))
-
-;;; ----------------------------------------------------
-
-(defun html (form &optional stream)
-  "Renders HTML to a string."
-  (if (null stream)
-      (with-output-to-string (s)
-        (html-format s form))
-    (html-format stream form)))
 
 ;;; ----------------------------------------------------
 
 (defun html-format (stream form &optional colonp atp &rest args)
   "Output an form to a stream as HTML."
-  (declare (ignore atp args))
+  (declare (ignore colonp atp args))
   (if (listp form)
-      (destructuring-bind (tag &optional atts &rest body)
-          form
-
-        ;; CDATA sections render special
-        (if (eq tag :cdata)
-            (format stream "<![CDATA[~{~a~}]]>" body)
-
-          ;; only encode if already encoding and not a language tag
-          (let ((*encode-html-p* (when *encode-html-p*
-                                   (not (or colonp (lang-tag-p tag))))))
-            (format stream
-                    +tag-format+
-
-                    ;; name
-                    tag
-
-                    (loop
-                       ;; tag attributes
-                       for att in atts
-
-                       ;; each attribute is a format
-                       collect (destructuring-bind (k &optional f &rest xs)
-                                   att
-                                 (list k (if (null xs)
-                                             f
-                                           (apply #'format nil f xs)))))
-
-                    ;; the inner-text
-                    body
-
-                    ;; no close tag if a singleton tag
-                    (singleton-tag-p tag)
-
-                    ;; close tag
-                    tag))))
-
-    ;; not a tag form, so just print it to the stream
-    (if (or *encode-html-p* colonp)
-        (write-string (markup-encode (princ-to-string form)) stream)
-      (princ form stream))))
+      (if (eq (first form) :cdata)
+          (format stream "<![CDATA[~{~a~}]]>" (rest form))
+        (apply 'html-format-tag stream form))
+    (write-string (markup-encode (princ-to-string form)) stream)))
 
 ;;; ----------------------------------------------------
 
-(defvar *tag-stack* nil
-  "Stack of the tags currently being tokenized.")
+(defun html-format-tag (stream tag &optional atts &rest content)
+  "Output a tag form to a stream."
+  (let ((singleton-tag-p (find tag +singleton-tags+ :test #'string-equal)))
+    (format stream +tag-format+
+            tag
+            atts
+            content
+            singleton-tag-p
+            tag)))
 
 ;;; ----------------------------------------------------
 
-(define-lexer html-lexer (s)
+(defmacro define-html-tag (name)
+  "Create a function that will generate a tag form to render."
+  (let ((f (intern (concatenate 'string "<" (string name) ">") *package*)))
+    `(let ((symbol (defun ,f (&rest args)
+                     (loop
+                        for arg = (pop args)
+                        while arg
 
-  ;; skip whitespace and comments
-  ("[%s%n]+|<!%-%-.-%-%->" :next-token)
+                        ;; if a keyword, it's an attribute
+                        when (keywordp arg)
+                        collect (list arg (pop args))
+                        into atts
 
-  ;; declaration tags
-  ("<!(%a+)[%s%n]+([%a_:][%w:.-]*)"
-   (if (string-equal $1 :doctype)
-       (push-lexer s 'doctype-lexer :doctype $2)
-     (error "Unrecognized HTML declaration tag ~s" $1)))
+                        ;; otherwise it's some content
+                        unless (keywordp arg)
+                        collect arg
+                        into content
 
-  ;; open tag
-  ("<([%a_:][%w:.-]*)"
-   (multiple-value-prog1
-       (push-lexer s 'attribute-lexer :tag $1)
-     (push $1 *tag-stack*))))
-
-;;; ----------------------------------------------------
-
-(define-lexer doctype-lexer (s)
-
-  ;; end of declaration
-  (">" (pop-lexer s :end-doctype))
-
-  ;; skip whitespace, named tokens, and quoted values
-  ("[%s%n]+|[%a_:][%w:.-]*|'.-'|\".-\"" :next-token))
+                        ;; construct the list to be rendered
+                        finally (return `(,',name ,atts ,@content))))))
+       (prog1 symbol (export symbol *package*)))))
 
 ;;; ----------------------------------------------------
 
-(define-lexer attribute-lexer (s)
-
-  ;; skip whitespace
-  ("[%s%n]+" :next-token)
-
-  ;; singleton tag
-  ("/>" (pop-lexer s :singleton-tag))
-
-  ;; end of attributes, beginning of inner text
-  (">" (if (lang-tag-p (first *tag-stack*))
-           (swap-lexer s 'lang-lexer :end-tag)
-         (swap-lexer s 'tag-lexer :end-tag)))
-
-  ;; attribute key
-  ("([%a_:][%w:.-]*)" (values :att $1))
-
-  ;; quoted attribute values
-  ("=[%s%n]*(?'(.-)'|\"(.-)\")" (values :value $1))
-
-  ;; unquoted attribute values
-  ("=[%s%n]*([^%s%n`'\"=<>]+)" (values :value $1)))
-
-;;; ----------------------------------------------------
-
-(define-lexer tag-lexer (s)
-
-  ;; coalesce whitespace
-  ("[%s%n]+" (values :whitespace #\space))
-
-  ;; skip comments
-  ("<!%-%-.-%-%->" :next-token)
-
-  ;; close tag
-  ("</([%a_:][%w:.-]*)%s*>" (pop-lexer s :close-tag $1))
-
-  ;; CDATA sections
-  ("<!%[CDATA%[(.-)%]%]" (values :cdata $1))
-
-  ;; child tag
-  ("<([%a_:][%w:.-]*)"
-   (multiple-value-prog1
-       (push-lexer s 'attribute-lexer :tag $1)
-     (push $1 *tag-stack*)))
-
-  ;; character references
-  ("&#x(%x+);" (values :char (character-ref $1 :radix 16)))
-  ("&#(%d+);" (values :char (character-ref $1 :radix 10)))
-  ("&(.-);" (values :char (entity-ref $1)))
-
-  ;; anything that isn't a tag or reference is inner html
-  (".[^%s%n&<]*" (values :inner-text $$)))
-
-;;; ----------------------------------------------------
-
-(define-lexer lang-lexer (s)
-
-  ;; close tag
-  ("</([%a_:][%w:.-]*)%s*>" (pop-lexer s :close-tag $1))
-
-  ;; quoted strings
-  ("'.-'|\".-\"" (values :inner-text $$))
-
-  ;; all text up to the close tag or quoted string
-  (".[^'\"<]*" (values :inner-text $$)))
-
-;;; ----------------------------------------------------
-
-(define-parser html-parser
-  "HTML is just a list of tags."
-  (.either 'doctype-parser 'tag-parser))
-
-;;; ----------------------------------------------------
-
-(define-parser doctype-parser
-  "Read the DOCTYPE and then parse a tag."
-  (.let (root (.is :doctype))
-    (.do (.is :end-doctype)
-         (.let (tag (.do (.skip-many (.is :whitespace)) 'tag-parser))
-           (.ret `(:!doctype ((,root)) ,tag))))))
-
-;;; ----------------------------------------------------
-
-(define-parser tag-parser
-  "Tag name, attributes, inner-text, and close tag."
-  (.let* ((tag (.is :tag)) (atts (.many 'attribute-parser)))
-
-    ;; singleton tags have no inner content
-    (if (singleton-tag-p tag)
-        (.do (.or (.is :singleton-tag)
-                  (.is :end-tag))
-             (.ret (list tag atts)))
-
-      ;; check for hard-coded singleton tag or parse content
-      (.or (.do (.is :singleton-tag) (.ret (list tag atts)))
-           (.do (.is :end-tag)
-                (.push tag)
-                (.let (inner-forms 'inner-html-parser)
-                  (.ret (append (list tag atts) inner-forms))))))))
-
-;;; ----------------------------------------------------
-
-(define-parser attribute-parser
-  "Parse all the attributes in a tag."
-  (.let (att (.is :att))
-    (.opt (list att t)
-
-          ;; html attribute value are optional
-          (.let (value (.is :value))
-            (.ret (list att value))))))
-
-;;; ----------------------------------------------------
-
-(define-parser inner-html-parser
-  "Parse the text and tags inside another tag."
-  (.let (forms (.many (.or 'tag-parser
-                           'cdata-parser
-
-                           ;; whitespace coalesces
-                           (.is :whitespace)
-                           (.is :char)
-                           (.is :inner-text))))
-
-    ;; ensure that the close tag matches
-    (.let (top (.pop))
-      (.or (.let (tag (.is :close-tag))
-             (if (string-equal tag top)
-                 (.ret forms)
-               (.fail "Tag mismatch; expected ~s got ~s" top tag)))
-           (.fail "Missing close tag for ~s" top)))))
-
-;;; ----------------------------------------------------
-
-(define-parser cdata-parser
-  "Parse a CDATA section."
-  (.let (data (.is :cdata))
-    (.ret (list :cdata nil data))))
-
-;;; ----------------------------------------------------
-
-(defun html-parse (string &optional source)
-  "Parse an HTML string and generate a Lisp form from it."
-  (with-lexer (lexer 'html-lexer string :source source)
-    (with-token-reader (next-token lexer)
-      (let ((*tag-stack* nil))
-        (parse 'html-parser next-token)))))
-
+(define-html-tag a)
+(define-html-tag abbr)
+(define-html-tag address)
+(define-html-tag area)
+(define-html-tag article)
+(define-html-tag aside)
+(define-html-tag audio)
+(define-html-tag b)
+(define-html-tag base)
+(define-html-tag bdi)
+(define-html-tag bdo)
+(define-html-tag blockquote)
+(define-html-tag body)
+(define-html-tag br)
+(define-html-tag button)
+(define-html-tag canvas)
+(define-html-tag caption)
+(define-html-tag cite)
+(define-html-tag code)
+(define-html-tag col)
+(define-html-tag colgroup)
+(define-html-tag command)
+(define-html-tag datalist)
+(define-html-tag dd)
+(define-html-tag del)
+(define-html-tag details)
+(define-html-tag dfn)
+(define-html-tag div)
+(define-html-tag dl)
+(define-html-tag dt)
+(define-html-tag em)
+(define-html-tag embed)
+(define-html-tag fieldset)
+(define-html-tag figcaption)
+(define-html-tag figure)
+(define-html-tag footer)
+(define-html-tag form)
+(define-html-tag h1)
+(define-html-tag h2)
+(define-html-tag h3)
+(define-html-tag h4)
+(define-html-tag h5)
+(define-html-tag h6)
+(define-html-tag head)
+(define-html-tag header)
+(define-html-tag hgroup)
+(define-html-tag hr)
+(define-html-tag html)
+(define-html-tag i)
+(define-html-tag iframe)
+(define-html-tag img)
+(define-html-tag input)
+(define-html-tag ins)
+(define-html-tag kbd)
+(define-html-tag keygen)
+(define-html-tag label)
+(define-html-tag legend)
+(define-html-tag li)
+(define-html-tag link)
+(define-html-tag map)
+(define-html-tag mark)
+(define-html-tag menu)
+(define-html-tag meta)
+(define-html-tag meter)
+(define-html-tag nav)
+(define-html-tag noscript)
+(define-html-tag object)
+(define-html-tag ol)
+(define-html-tag optgroup)
+(define-html-tag option)
+(define-html-tag output)
+(define-html-tag p)
+(define-html-tag param)
+(define-html-tag pre)
+(define-html-tag progress)
+(define-html-tag q)
+(define-html-tag rp)
+(define-html-tag rt)
+(define-html-tag ruby)
+(define-html-tag s)
+(define-html-tag samp)
+(define-html-tag script)
+(define-html-tag section)
+(define-html-tag select)
+(define-html-tag small)
+(define-html-tag source)
+(define-html-tag span)
+(define-html-tag strong)
+(define-html-tag style)
+(define-html-tag sub)
+(define-html-tag summary)
+(define-html-tag sup)
+(define-html-tag table)
+(define-html-tag tbody)
+(define-html-tag td)
+(define-html-tag textarea)
+(define-html-tag tfoot)
+(define-html-tag th)
+(define-html-tag thead)
+(define-html-tag time)
+(define-html-tag title)
+(define-html-tag tr)
+(define-html-tag track)
+(define-html-tag u)
+(define-html-tag ul)
+(define-html-tag var)
+(define-html-tag video)
+(define-html-tag wbr)
