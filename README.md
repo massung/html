@@ -6,11 +6,11 @@ A simple HTML rendering package for Common Lisp. It properly encodes inner text 
 
 Only a couple functions and a single macro are exported.
 
-    (html form &optional stream)
+    (html-render form)
 
     (html-format stream form &optional colonp atp &rest args)
 
-The `html` function converts a Lisp *form* (as HTML) into a string (optionally writing to a stream instead). Atoms are HTML encoded and written to the stream as-is. Lists are considered tags, and are expected to be in form:
+The `html-render` function converts a Lisp *form* (as HTML) into a string (optionally writing to a stream instead). Atoms are HTML encoded and written to the stream as-is. Lists are considered tags, and are expected to be in form:
 
     (tag-name &optional attributes &rest child-forms)
 
@@ -22,7 +22,7 @@ Let's try it...
     CL-USER > (html '(:h1 ((:class "<wow>")) "This & That"))
     "<H1 CLASS='&lt;wow&gt;'>This &amp; That</H1>"
 
-The `html-format` function is designed to be callable from within a `format` call using [`~/`](http://www.lispworks.com/documentation/HyperSpec/Body/22_ced.htm). In fact, `html` simply wraps a call to `html-format`.
+The `html-format` function is designed to be callable from within a `format` call using [`~/`](http://www.lispworks.com/documentation/HyperSpec/Body/22_ced.htm). In fact, `html-render` simply wraps a call to `html-format`.
 
 ## Making It Easier
 
@@ -38,14 +38,14 @@ For example:
                 (<div> :class "example" "Cool, eh?")))
     (HTML NIL (HTML::HEAD NIL (HTML::TITLE NIL "Title") (HTML::LINK ((:HREF "style.css") (:REL "stylesheet")))) (HTML::BODY NIL (HTML::DIV ((:CLASS "example")) "Cool, eh?")))
 
-And these expressions can be passed right along to `html`...
+And these expressions can be passed right along to `html-render`...
 
-    CL-USER > (html *)
+    CL-USER > (html-render *)
     "<HTML><HEAD><TITLE>Title</TITLE><LINK HREF='style.css' REL='stylesheet'></HEAD><BODY><DIV CLASS='example'>Cool, eh?</DIV></BODY></HTML>"
 
 After the function, any keyword arguments are asssumed to be attributes, followed by a value. If the value is NIL, then the attribute is written as a singleton attribute. For example:
 
-    CL-USER > (html (<td> :nowrap nil))
+    CL-USER > (html-render (<td> :nowrap nil))
     "<TD NOWRAP></TD>"
 
 Every HTML5 tag is automatically supported, but you can also create your own tags as well using the `define-html-tag` macro:
@@ -57,7 +57,7 @@ The *name* argument should be the tag that is output to the s-expression, and so
     CL-USER > (define-html-tag foo)
     <FOO>
 
-    CL-USER > (html (<foo> :bar "baz" "Look, ma, my own tag!"))
+    CL-USER > (html-render (<foo> :bar "baz" "Look, ma, my own tag!"))
     "<FOO BAR='baz'>Look, ma, my own tag!</FOO>"
 
 That's it!

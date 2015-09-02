@@ -20,7 +20,7 @@
 (defpackage :html
   (:use :cl :markup)
   (:export
-   #:html
+   #:html-render
    #:html-format
 
    ;; macros
@@ -30,9 +30,9 @@
 
 ;;; ----------------------------------------------------
 
-(defun html (form &optional stream)
+(defun html-render (form)
   "Renders HTML to a string."
-  (format stream "~/html-format/" form))
+  (format nil "~/html-format/" form))
 
 ;;; ----------------------------------------------------
 
