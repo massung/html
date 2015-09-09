@@ -4,76 +4,93 @@ A simple HTML rendering package for Common Lisp. It properly encodes inner text 
 
 ## Quickstart
 
-Only a couple functions and a single macro are exported.
+The most common function you'll use to render HTML is the `html-render` function:
 
-    (html-render form)
+    (html-render form &optional stream)
+
+It renders an arbitrary Lisp form into HTML. If no stream is provided, then the output is to a string. Many different Lisp types are supported, and sequences are recursively rendered.
+
+    CL-USER > (html-render "Hello")
+    "Hello"
+
+    CL-USER > (html-render "This & That")
+    "This &amp; That"
+
+    CL-USER > (html-render '(a b c))
+    "ABC"
+
+At a lower-level, `html-render` works by calling into `html-format`: a generic method which handles encoding entities and generating the output for tags, DOCTYPE declarations, and CDATA.
 
     (html-format stream form &optional colonp atp &rest args)
 
-The `html-render` function converts a Lisp *form* (as HTML) into a string (optionally writing to a stream instead). Atoms are HTML encoded and written to the stream as-is. Lists are considered tags, and are expected to be in form:
+The `html-format` function is designed to be callable from within a `format` call using [`~/`](http://www.lispworks.com/documentation/HyperSpec/Body/22_ced.htm). The only optional argument that is used is *colonp*, which (if T) will force encoding of HTML entities. You should almost never have to worry about this, as the code should just "do the right thing".
 
-    (tag-name &optional attributes &rest child-forms)
+## HTML Tags
 
-Let's try it...
+Internal to the `html` package are three classes which handle rendering of all HTML elements:
 
-    CL-USER > (html-render "Hello, world!")
-    "Hello, world!"
+* HTML-TAG
+* HTML-DOCTYPE
+* HTML-CDATA
 
-    CL-USER > (html-render '(:h1 ((:class "<wow>")) "This & That"))
-    "<H1 CLASS='&lt;wow&gt;'>This &amp; That</H1>"
-
-The `html-format` function is designed to be callable from within a `format` call using [`~/`](http://www.lispworks.com/documentation/HyperSpec/Body/22_ced.htm). In fact, `html-render` simply wraps a call to `html-format`.
-
-## Making It Easier
-
-Putting together s-expressions to generate HTML can be a bit cumbersome, and usually devolves into backquoting and comma-evaluating. But, the HTML package allows for (almost) HTML-like generation of the s-expressions for you using tag functions.
-
-For example:
-
-    CL-USER > (<html>
-               (<head>
-                (<title> "Title")
-                (<link> :href "style.css" :rel "stylesheet"))
-               (<body>
-                (<div> :class "example" "Cool, eh?")))
-    (HTML NIL (HTML::HEAD NIL (HTML::TITLE NIL "Title") (HTML::LINK ((:HREF "style.css") (:REL "stylesheet")))) (HTML::BODY NIL (HTML::DIV ((:CLASS "example")) "Cool, eh?")))
-
-And these expressions can be passed right along to `html-render`...
-
-    CL-USER > (html-render *)
-    "<HTML><HEAD><TITLE>Title</TITLE><LINK HREF='style.css' REL='stylesheet'></HEAD><BODY><DIV CLASS='example'>Cool, eh?</DIV></BODY></HTML>"
-
-After the function, any keyword arguments are asssumed to be attributes, followed by a value. If the value is NIL, then the attribute is written as a singleton attribute. For example:
-
-    CL-USER > (html-render (<td> :nowrap nil))
-    "<TD NOWRAP></TD>"
-
-Every valid HTML5 tag has a corresponding tag function, but you can also create your own tags as well using the `define-html-tag` macro:
+While you do not construct these directly (with `make-instance`), they can be constructed using tag functions which are declared with the `define-html-tag` macro.
 
     (define-html-tag name)
 
-The *name* argument should be the tag that is output to the s-expression, and so should be a symbol or string. A function with the tag name wrapped in angle-brackets (<>) is automatically written, which handles parsing of attribute keywords and content forms for you.
+The *name* should be the tag name that is output via `html-render`, but otherwise is just a symbol. A function will be created that wraps your tag in angle brackets (<>), which can then be called to construct a tag with attributes and elements.
 
-    CL-USER > (define-html-tag foo)
-    <FOO>
+*All HTML5 tags are already defined for you.*
 
-    CL-USER > (html-render (<foo> :bar "baz" "Look, ma, my own tag!"))
-    "<FOO BAR='baz'>Look, ma, my own tag!</FOO>"
+For example:
 
-## Rendering CDATA
+    CL-USER > (<img> :src "lolcat.png")
+    #<HTML-TAG "IMG">
 
-The `html-format` (and render) functions can also handle render of CDATA blocks in HTML. To do this, simply render a list in the form:
+Now, let's render it.
 
-    (:CDATA &rest content)
+    CL-USER > (html-render *)
+    "<IMG SRC='lolcat.png'>"
 
-All the content will be wrapped into a `<![CDATA[..content..]]>` block.
+One thing to notice is that the `html` package is aware that the "IMG" tag is a singleton HTML tag (it has no close tag) and renders it appropriately.
 
-    CL-USER > (html-render '(:cdata "<this & that>"))
-    "<![CDATA[<this & that>]]>"
+When calling a tag function, all keywords passed in are assumed to be attributes with the value immediately following it (which can be NIL for singleton attributes). Any other value is an element in the tag. There is no requirement for attribute to preceed child elements.
 
-And, of course this can be used from within html tags generators as well.
+Let's try another example:
 
-    CL-USER > (html-render (<b> (list :cdata (format nil "~{~a~^,~}" '(a b c)))))
-    "<B><![CDATA[A,B,C]]></B>"
+    CL-USER > (html-render (<ul> :class "ex-1" (loop for i below 3 collect (<li> i))))
+    "<UL CLASS='ex-1'><LI>0</LI><LI>1</LI><LI>2</LI></UL>
+
+## DOCTYPE and CDATA
+
+In addition to the HTML5 tag functions, there are two additional functions you can use to create HTML elements:
+
+    (<!doctype> &optional root)
+
+This will create an `html-doctype` element that will render the <!DOCTYPE> declaration.
+
+    (<!cdata> &optional data)
+
+This will create an `html-cdata` element that will properly render <![CDATA[..]]> sections for you with unencoded data.
+
+    CL-USER > (html-render (<body> (<!cdata> "<This & That>")))
+    "<BODY><![CDATA[<This & That>]]></BODY>"
+
+The doctype root and cdata data are optional parameters. If nil, the DOCTYPE declaration will not render and neither will the CDATA block. However, you can use these function to create an empty object that you can then modify for use later.
+
+## Accessor Methods
+
+`html-tag` accessors
+
+    (html-tag-name tag)           ;=> string
+    (html-tag-attributes tag)     ;=> associative-list
+    (html-tag-elements tag)       ;=> form list
+
+`html-doctype` accessors
+
+    (html-doctype-root doctype)   ;=> string
+
+`html-cdata` accessors
+
+    (html-cdata-data cdata)       ;=> string
 
 That's it!

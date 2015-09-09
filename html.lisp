@@ -23,6 +23,21 @@
    #:html-render
    #:html-format
 
+   ;; doctype and cdata tags
+   #:<!doctype>
+   #:<!cdata>
+
+   ;; tag accessors
+   #:html-tag-name
+   #:html-tag-attributes
+   #:html-tag-elements
+
+   ;; doctype accessors
+   #:html-doctype-root
+
+   ;; cdata accessors
+   #:html-cdata-data
+
    ;; macros
    #:define-html-tag))
 
@@ -30,15 +45,37 @@
 
 ;;; ----------------------------------------------------
 
-(defun html-render (form)
-  "Renders HTML to a string."
-  (format nil "~/html:html-format/" form))
+(defclass html-tag ()
+  ((name :initarg :name :accessor html-tag-name)
+   (atts :initarg :attributes :accessor html-tag-attributes)
+   (elts :initarg :elements :accessor html-tag-elements))
+  (:documentation "A basic HTML tag to be rendered."))
 
 ;;; ----------------------------------------------------
 
-(defconstant +tag-format+
-  "<~a~:{ ~a~@[='~@/html:html-format/'~]~}>~{~/html:html-format/~}~@[</~a>~]"
-  "Format for rendering a tag string.")
+(defclass html-doctype ()
+  ((root :initarg :root :accessor html-doctype-root))
+  (:documentation "An HTML <!DOCTYPE> tag."))
+
+;;; ----------------------------------------------------
+
+(defclass html-cdata ()
+  ((data :initarg :data :accessor html-cdata-data :initform nil))
+  (:documentation "An HTML <![CDATA[..]]> inner HTML tag."))
+
+;;; ----------------------------------------------------
+
+(defmethod print-object ((tag html-tag) stream)
+  "Output a tag to a stream."
+  (print-unreadable-object (tag stream :type t)
+    (prin1 (html-tag-name tag) stream)))
+
+;;; ----------------------------------------------------
+
+(defmethod print-object ((tag html-doctype) stream)
+  "Output a doctype declaration to a stream."
+  (print-unreadable-object (tag stream :type t)
+    (prin1 (html-doctype-root tag) stream)))
 
 ;;; ----------------------------------------------------
 
@@ -53,38 +90,99 @@
 
 ;;; ----------------------------------------------------
 
-(defvar *encode-html-p* t
-  "Contents of a tag should be encoded.")
+(defparameter *encode-html-p* t
+  "T if non-tag forms should be encoded.")
 
 ;;; ----------------------------------------------------
 
-(defun html-format (stream form &optional colonp atp &rest args)
+(defun html-render (form &optional stream)
+  "Render forms to an HTML string or output stream."
+  (if stream
+      (html-format stream form t)
+    (with-output-to-string (s)
+      (html-format s form t))))
+
+;;; ----------------------------------------------------
+
+(defmethod html-format (stream (form t) &optional colonp &rest xs)
   "Output an form to a stream as HTML."
-  (declare (ignore colonp args))
-  (if (listp form)
-      (if (eq (first form) :cdata)
-          (format stream "<![CDATA[~{~a~}]]>" (rest form))
-        (apply 'html-format-tag stream form))
-    (if (and (null atp) (null *encode-html-p*))
-        (princ form stream)
-      (write-string (markup-encode (princ-to-string form)) stream))))
+  (declare (ignore xs))
+  (html-format stream (princ-to-string form) colonp))
 
 ;;; ----------------------------------------------------
 
-(defun html-format-tag (stream tag &optional atts &rest content)
-  "Output a tag form to a stream."
-  (let* ((language-tag-p (find tag +language-tags+ :test 'string-equal))
-         (singleton-tag-p (find tag +singleton-tags+ :test 'string-equal))
+(defmethod html-format (stream (s string) &optional colonp &rest xs)
+  "Output a string to a stream."
+  (declare (ignore xs))
+  (if (or colonp *encode-html-p*)
+      (write-string (markup-encode s) stream)
+    (princ s stream)))
 
-         ;; disable HTML-encoding of content in a language tag
-         (*encode-html-p* (not language-tag-p)))
-    (format stream +tag-format+
-            tag
-            atts
-            content
+;;; ----------------------------------------------------
 
-            ;; singleton tags do not close their open tag
-            (unless singleton-tag-p tag))))
+(defmethod html-format (stream (seq sequence) &optional colonp &rest xs)
+  "Output a sequence of forms to a stream."
+  (declare (ignore xs))
+  (map nil #'(lambda (i) (html-format stream i colonp)) seq))
+
+;;; ----------------------------------------------------
+
+(defmethod html-format (stream (tag html-doctype) &optional colonp &rest xs)
+  "Output a DOCTYPE declaration to a stream."
+  (declare (ignore colonp xs))
+  (format stream "~@[<!DOCTYPE ~a>~]" (html-doctype-root tag)))
+
+;;; ----------------------------------------------------
+
+(defmethod html-format (stream (tag html-cdata) &optional colonp &rest xs)
+  "Output CDATA to a stream."
+  (declare (ignore colonp xs))
+  (format stream "~@[<![CDATA[~a]]>~]" (html-cdata-data tag)))
+
+;;; ----------------------------------------------------
+
+(defmethod html-format (stream (tag html-tag) &optional colonp &rest xs)
+  "Ouput an HTML tag to a stream."
+  (declare (ignore xs))
+  (with-slots (name atts elts)
+      tag
+
+    ;; is this a language or singleton tag?
+    (let ((language-p (find name +language-tags+ :test 'string-equal))
+          (singleton-p (find name +singleton-tags+ :test 'string-equal)))
+
+      ;; write the tag
+      (write-char #\< stream)
+      (write-string name stream)
+
+      ;; write out all the attribute elements
+      (format stream "~:{ ~a~@[='~:/html:html-format/'~]~}" atts)
+
+      ;; close empty, non-singleton tags
+      (unless (or elts singleton-p)
+        (write-char #\/ stream))
+      (write-char #\> stream)
+
+      ;; write all the elements
+      (unless (or (null elts) singleton-p)
+        (let ((*encode-html-p* (and (not colonp) (not language-p))))
+          (dolist (form elts)
+            (html-format stream form)))
+
+        ;; output the close tag
+        (format stream "</~a>" name)))))
+
+;;; ----------------------------------------------------
+
+(defun <!doctype> (&optional root)
+  "Create a simple DOCTYPE declaration tag."
+  (make-instance 'html-doctype :root root))
+
+;;; ----------------------------------------------------
+
+(defun <!cdata> (&optional data)
+  "Create a CDATA tag."
+  (make-instance 'html-cdata :data data))
 
 ;;; ----------------------------------------------------
 
@@ -96,18 +194,21 @@
                         for arg = (pop args)
                         while arg
 
-                        ;; if a keyword, it's an attribute
+                        ;; keywords are attributes
                         when (keywordp arg)
                         collect (list arg (pop args))
                         into atts
 
-                        ;; otherwise it's some content
+                        ;; otherwise it's an element
                         unless (keywordp arg)
                         collect arg
-                        into content
+                        into xs
 
-                        ;; construct the list to be rendered
-                        finally (return `(,',name ,atts ,@content))))))
+                        ;; construct the tag
+                        finally (return (make-instance 'html-tag
+                                                       :name ,(string name)
+                                                       :attributes atts
+                                                       :elements xs))))))
        (prog1 symbol
          (export symbol *package*)))))
 
