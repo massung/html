@@ -98,9 +98,9 @@
 (defun html-render (form &optional stream)
   "Render forms to an HTML string or output stream."
   (if stream
-      (html-format stream form t)
+      (html-format stream form)
     (with-output-to-string (s)
-      (html-format s form t))))
+      (html-format s form))))
 
 ;;; ----------------------------------------------------
 
@@ -165,7 +165,7 @@
 
       ;; write all the elements
       (unless (or (null elts) singleton-p)
-        (let ((*encode-html-p* (and (not colonp) (not language-p))))
+        (let ((*encode-html-p* (or colonp (not language-p))))
           (dolist (form elts)
             (html-format stream form)))
 
