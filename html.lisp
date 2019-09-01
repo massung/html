@@ -79,13 +79,13 @@
 
 ;;; ----------------------------------------------------
 
-(defconstant +singleton-tags+
+(defparameter *singleton-tags*
   '(area base br col command embed hr img input link meta param source)
   "Tags that do not have matching close tags.")
 
 ;;; ----------------------------------------------------
 
-(defconstant +language-tags+ '(script style)
+(defparameter *language-tags* '(script style)
   "Tags that do not HTML encode their contents.")
 
 ;;; ----------------------------------------------------
@@ -148,8 +148,8 @@
       tag
 
     ;; is this a language or singleton tag?
-    (let ((language-p (find name +language-tags+ :test 'string-equal))
-          (singleton-p (find name +singleton-tags+ :test 'string-equal)))
+    (let ((language-p (find name *language-tags* :test 'string-equal))
+          (singleton-p (find name *singleton-tags* :test 'string-equal)))
 
       ;; write the tag
       (write-char #\< stream)
@@ -231,6 +231,7 @@
 (define-html-tag button)
 (define-html-tag canvas)
 (define-html-tag caption)
+(define-html-tag center)
 (define-html-tag cite)
 (define-html-tag code)
 (define-html-tag col)
