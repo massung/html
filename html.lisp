@@ -318,6 +318,7 @@
 (define-html-tag title)
 (define-html-tag tr)
 (define-html-tag track)
+(define-html-tag tt)
 (define-html-tag u)
 (define-html-tag ul)
 (define-html-tag var)
