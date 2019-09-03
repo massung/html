@@ -158,16 +158,17 @@
       ;; write out all the attribute elements
       (format stream "~:{ ~a~@[='~:/html:html-format/'~]~}" atts)
 
-      ;; close empty, non-singleton tags
-      (unless (or elts singleton-p)
-        (write-char #\/ stream))
+      ;; close the tag
       (write-char #\> stream)
 
-      ;; write all the elements
-      (unless (or (null elts) singleton-p)
-        (let ((*encode-html-p* (or colonp (not language-p))))
-          (dolist (form elts)
-            (html-format stream form)))
+      ;; singleton tags have no elements or close tag
+      (unless singleton-p
+
+        ;; write child elements
+        (unless (null elts)
+          (let ((*encode-html-p* (or colonp (not language-p))))
+            (dolist (form elts)
+              (html-format stream form))))
 
         ;; output the close tag
         (format stream "</~a>" name)))))
